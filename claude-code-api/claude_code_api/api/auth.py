@@ -41,6 +41,7 @@ class LoginStartRequest(BaseModel):
 class LoginStartResponse(BaseModel):
     url: str
     message: str
+    manual: bool = False
 
 
 class LoginCodeRequest(BaseModel):
@@ -142,11 +143,14 @@ async def login_start(request: LoginStartRequest = LoginStartRequest()) -> Login
 
     from urllib.parse import urlencode
 
-    # Use serverUrl from frontend if provided, otherwise fallback to localhost
-    if request.serverUrl:
-        redirect_uri = f"{request.serverUrl.rstrip('/')}/callback"
-    else:
+    # Determine redirect URI based on access origin
+    # - localhost: automatic redirect to our nginx callback
+    # - remote IP/hostname: use Claude's manual code display page
+    is_localhost = not request.serverUrl or "localhost" in request.serverUrl or "127.0.0.1" in request.serverUrl
+    if is_localhost:
         redirect_uri = REDIRECT_URI
+    else:
+        redirect_uri = MANUAL_REDIRECT_URI
 
     params = {
         "code": "true",  # CLI always includes this
@@ -168,11 +172,17 @@ async def login_start(request: LoginStartRequest = LoginStartRequest()) -> Login
         "started_at": time.time(),
     }
 
-    logger.info("OAuth flow started", state=state[:8] + "...", redirect_uri=redirect_uri)
+    logger.info("OAuth flow started", state=state[:8] + "...", redirect_uri=redirect_uri, manual=not is_localhost)
+
+    if is_localhost:
+        message = "브라우저에서 로그인하면 자동으로 인증이 완료됩니다."
+    else:
+        message = "브라우저에서 로그인 후 표시되는 코드를 아래에 입력하세요."
 
     return LoginStartResponse(
         url=url,
-        message="브라우저에서 로그인하면 자동으로 인증이 완료됩니다.",
+        message=message,
+        manual=not is_localhost,
     )
 
 

@@ -23,6 +23,7 @@ export default function SettingsPage() {
   const [oauthCode, setOauthCode] = useState('');
   const [oauthLoading, setOauthLoading] = useState(false);
   const [oauthMessage, setOauthMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [oauthManual, setOauthManual] = useState(false);
   const [serverUrl, setServerUrl] = useState(window.location.origin);
 
   useEffect(() => {
@@ -48,6 +49,7 @@ export default function SettingsPage() {
     try {
       const result = await settingsApi.startOAuthLogin(serverUrl);
       setOauthUrl(result.url);
+      setOauthManual(result.manual || false);
 
       // Open OAuth URL in a new window
       const authWindow = window.open(result.url, '_blank', 'width=600,height=700');
@@ -261,7 +263,9 @@ export default function SettingsPage() {
                 <div className="p-4 bg-blue-900/20 border border-blue-800 rounded">
                   <div className="flex items-center gap-2 mb-2">
                     <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
-                    <p className="text-sm text-blue-300 font-medium">브라우저에서 로그인 대기 중...</p>
+                    <p className="text-sm text-blue-300 font-medium">
+                      {oauthManual ? '브라우저에서 로그인 후 코드를 입력하세요' : '브라우저에서 로그인 대기 중...'}
+                    </p>
                   </div>
                   <p className="text-xs text-gray-400 mb-3">새 창이 열리지 않았다면 아래 링크를 클릭하세요:</p>
                   <a
@@ -272,13 +276,14 @@ export default function SettingsPage() {
                   >
                     Claude 로그인 페이지 열기
                   </a>
-                  <p className="text-xs text-gray-500 mt-3">로그인하면 자동으로 인증이 완료됩니다. 이 페이지로 돌아올 때까지 잠시 기다려주세요.</p>
+                  {!oauthManual && (
+                    <p className="text-xs text-gray-500 mt-3">로그인하면 자동으로 인증이 완료됩니다.</p>
+                  )}
                 </div>
 
-                {/* Manual code fallback - hidden by default */}
-                <details className="text-xs">
-                  <summary className="text-gray-500 hover:text-gray-400 cursor-pointer">수동 입력 (자동 인증이 안 될 경우)</summary>
-                  <div className="p-4 bg-gray-700 rounded mt-2">
+                {/* Code input - shown automatically for remote access, collapsible for localhost */}
+                {oauthManual ? (
+                  <div className="p-4 bg-gray-700 rounded">
                     <p className="text-sm text-gray-300 mb-2">로그인 후 표시되는 Authentication Code를 입력하세요:</p>
                     <div className="flex gap-3">
                       <input
@@ -298,10 +303,34 @@ export default function SettingsPage() {
                       </button>
                     </div>
                   </div>
-                </details>
+                ) : (
+                  <details className="text-xs">
+                    <summary className="text-gray-500 hover:text-gray-400 cursor-pointer">수동 입력 (자동 인증이 안 될 경우)</summary>
+                    <div className="p-4 bg-gray-700 rounded mt-2">
+                      <p className="text-sm text-gray-300 mb-2">로그인 후 표시되는 Authentication Code를 입력하세요:</p>
+                      <div className="flex gap-3">
+                        <input
+                          type="text"
+                          value={oauthCode}
+                          onChange={(e) => setOauthCode(e.target.value)}
+                          placeholder="Authentication Code 붙여넣기"
+                          className="flex-1 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500 font-mono"
+                          onKeyDown={(e) => e.key === 'Enter' && handleOAuthSubmitCode()}
+                        />
+                        <button
+                          onClick={handleOAuthSubmitCode}
+                          disabled={oauthLoading || !oauthCode.trim()}
+                          className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded text-sm font-medium transition-colors"
+                        >
+                          {oauthLoading ? '확인 중...' : '인증 완료'}
+                        </button>
+                      </div>
+                    </div>
+                  </details>
+                )}
 
                 <button
-                  onClick={() => { setOauthUrl(null); setOauthCode(''); }}
+                  onClick={() => { setOauthUrl(null); setOauthCode(''); setOauthManual(false); }}
                   className="text-xs text-gray-400 hover:text-gray-300"
                 >
                   취소

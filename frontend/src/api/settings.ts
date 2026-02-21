@@ -37,6 +37,7 @@ export interface AuthStatus {
 export interface LoginStartResponse {
   url: string;
   message: string;
+  manual?: boolean;
 }
 
 export interface LoginCodeResponse {
