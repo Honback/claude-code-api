@@ -4,6 +4,18 @@ import { streamChat, abortChat } from '../api/chat';
 import * as convApi from '../api/conversations';
 import type { Message } from '../types';
 
+/** Generate UUID that works on both HTTP and HTTPS. */
+function generateId(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return generateId();
+  }
+  // Fallback for non-secure contexts (HTTP)
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
 export function useChat() {
   const {
     conversations,
@@ -44,7 +56,7 @@ export function useChat() {
     if (isStreaming) return;
 
     const userMessage: Message = {
-      id: crypto.randomUUID(),
+      id: generateId(),
       role: 'user',
       content,
       createdAt: new Date().toISOString(),
@@ -80,7 +92,7 @@ export function useChat() {
         const finalContent = useChatStore.getState().streamingContent;
         if (finalContent) {
           const assistantMessage: Message = {
-            id: crypto.randomUUID(),
+            id: generateId(),
             role: 'assistant',
             content: finalContent,
             createdAt: new Date().toISOString(),
@@ -94,7 +106,7 @@ export function useChat() {
       (error) => {
         console.error('Stream error:', error);
         const errorMessage: Message = {
-          id: crypto.randomUUID(),
+          id: generateId(),
           role: 'assistant',
           content: `Error: ${error.message}`,
           createdAt: new Date().toISOString(),
