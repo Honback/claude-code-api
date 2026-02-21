@@ -108,10 +108,10 @@ public class ChatProxyService {
                                         .replace("\\", "\\\\")
                                         .replace("\"", "\\\"")
                                         .replace("\n", " ");
-                                String sseError = "data: {\"error\":{\"message\":\"" + safeMsg +
-                                        "\",\"type\":\"" + errorType + "\"}}\n\n" +
-                                        "data: [DONE]\n\n";
-                                return Flux.just(sseError);
+                                // Return raw JSON payloads - Spring SSE serializer adds "data:" prefix
+                                String errorJson = "{\"error\":{\"message\":\"" + safeMsg +
+                                        "\",\"type\":\"" + errorType + "\"}}";
+                                return Flux.just(errorJson, "[DONE]");
                             });
                 })
                 .timeout(Duration.ofMinutes(5))
@@ -186,13 +186,13 @@ public class ChatProxyService {
                 .onErrorResume(error -> {
                     log.error("Chat error, returning SSE error", error);
                     String msg = error.getMessage() != null ? error.getMessage() : "Connection error";
-                    String safeMsg = msg.replace("\"", "'").replace("\n", " ");
+                    String safeMsg = msg.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ");
                     if (safeMsg.length() > 300) {
                         safeMsg = safeMsg.substring(0, 300);
                     }
-                    return Flux.just(
-                            "data: {\"error\":{\"message\":\"" + safeMsg + "\",\"type\":\"stream_error\"}}\n\ndata: [DONE]\n\n"
-                    );
+                    // Return raw JSON payloads - Spring SSE serializer adds "data:" prefix
+                    String errorJson = "{\"error\":{\"message\":\"" + safeMsg + "\",\"type\":\"stream_error\"}}";
+                    return Flux.just(errorJson, "[DONE]");
                 });
 
         return Flux.concat(metadataFlux, chatFlux);

@@ -245,6 +245,17 @@ class ClaudeProcess:
             if system_prompt:
                 body["system"] = system_prompt
 
+            # Determine auth method for logging
+            auth_method = "Bearer" if "Authorization" in auth_headers else "x-api-key"
+            logger.info(
+                "Calling Anthropic API",
+                url=ANTHROPIC_API_URL,
+                model=model,
+                auth_method=auth_method,
+                prompt_length=len(prompt),
+                has_system_prompt=bool(system_prompt),
+            )
+
             headers = {
                 **auth_headers,
                 "anthropic-version": ANTHROPIC_API_VERSION,
@@ -268,7 +279,15 @@ class ClaudeProcess:
                         logger.error(
                             "API call failed",
                             status=response.status_code,
-                            error=error_text[:200],
+                            error=error_text[:500],
+                        )
+                        # Propagate error to SSE stream
+                        await self.output_queue.put(
+                            {
+                                "type": "error",
+                                "error": self.last_error,
+                                "session_id": self.cli_session_id,
+                            }
                         )
                         return
 
@@ -349,10 +368,24 @@ class ClaudeProcess:
         except httpx.TimeoutException:
             self.last_error = "API call timed out"
             logger.error("API timeout", session_id=self.session_id)
+            await self.output_queue.put(
+                {
+                    "type": "error",
+                    "error": self.last_error,
+                    "session_id": self.cli_session_id,
+                }
+            )
         except Exception as e:
             self.last_error = str(e)
             logger.error(
                 "API call failed", session_id=self.session_id, error=str(e)
+            )
+            await self.output_queue.put(
+                {
+                    "type": "error",
+                    "error": self.last_error,
+                    "session_id": self.cli_session_id,
+                }
             )
         finally:
             await self.output_queue.put(None)  # End signal

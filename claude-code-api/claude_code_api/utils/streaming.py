@@ -140,9 +140,18 @@ class OpenAIStreamConverter:
 
             saw_assistant_text = False
             saw_tool_calls = False
+            saw_error = False
 
             # Process Claude output
             async for claude_message in claude_process.get_output():
+                # Check for error messages from the queue
+                if isinstance(claude_message, dict) and claude_message.get("type") == "error":
+                    error_msg = claude_message.get("error", "Unknown API error")
+                    logger.error("Received error from Claude process", error=error_msg)
+                    yield SSEFormatter.format_error(error_msg, "api_error")
+                    saw_error = True
+                    break
+
                 message = normalize_claude_message(claude_message)
                 if not message:
                     continue
@@ -161,11 +170,21 @@ class OpenAIStreamConverter:
                 if self.parser.is_final_message(message):
                     break
 
+            # Check for silent errors (no content and no error sent)
+            if not saw_error and not saw_assistant_text and claude_process.last_error:
+                logger.error(
+                    "Claude process had error with no content",
+                    error=claude_process.last_error,
+                )
+                yield SSEFormatter.format_error(claude_process.last_error, "api_error")
+                saw_error = True
+
             # Send final chunk
-            finish_reason = "tool_calls" if saw_tool_calls else "stop"
-            yield SSEFormatter.format_event(
-                self._build_chunk({}, finish_reason=finish_reason)
-            )
+            if not saw_error:
+                finish_reason = "tool_calls" if saw_tool_calls else "stop"
+                yield SSEFormatter.format_event(
+                    self._build_chunk({}, finish_reason=finish_reason)
+                )
 
             # Send completion signal
             yield SSEFormatter.format_completion()
