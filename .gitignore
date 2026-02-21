@@ -28,8 +28,13 @@ Thumbs.db
 *.log
 logs/
 
-# claude-code-api
-claude-code-api/
+# claude-code-api (include source, exclude artifacts)
+claude-code-api/.git/
+claude-code-api/.env
+claude-code-api/__pycache__/
+claude-code-api/**/__pycache__/
+claude-code-api/**/*.pyc
+claude-code-api/.github/
 
 # E2E / Playwright
 node_modules/
