@@ -70,12 +70,12 @@ public class SettingsController {
     @PostMapping("/auth/login/start")
     public ResponseEntity<String> authLoginStart(@RequestBody(required = false) Map<String, String> body) {
         try {
-            var request = claudeCodeApiClient.post()
-                    .uri("/auth/login/start");
-            if (body != null && body.containsKey("serverUrl")) {
-                request = request.bodyValue(Map.of("serverUrl", body.get("serverUrl")));
-            }
-            String result = request
+            Map<String, String> payload = body != null && body.containsKey("serverUrl")
+                    ? Map.of("serverUrl", body.get("serverUrl"))
+                    : Map.of();
+            String result = claudeCodeApiClient.post()
+                    .uri("/auth/login/start")
+                    .bodyValue(payload)
                     .retrieve()
                     .bodyToMono(String.class)
                     .block(java.time.Duration.ofSeconds(60));
