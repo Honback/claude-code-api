@@ -7,6 +7,7 @@ import json
 import os
 import secrets
 import time
+from datetime import datetime
 from urllib.parse import unquote
 
 import httpx
@@ -46,6 +47,7 @@ class AuthStatusResponse(BaseModel):
     logged_in: bool
     auth_method: str
     api_provider: str | None = None
+    message: str | None = None
 
 
 def _credentials_path() -> str:
@@ -73,6 +75,20 @@ async def auth_status() -> AuthStatusResponse:
                 creds = json.load(f)
             oauth = creds.get("claudeAiOauth", {})
             if oauth.get("accessToken"):
+                expires_at = oauth.get("expiresAt", 0)
+                now_ms = int(time.time() * 1000)
+
+                if expires_at > 0 and expires_at <= now_ms:
+                    # Token expired
+                    expired_time = datetime.fromtimestamp(expires_at / 1000)
+                    expired_str = expired_time.strftime("%Y-%m-%d %H:%M:%S")
+                    return AuthStatusResponse(
+                        logged_in=False,
+                        auth_method="oauth_expired",
+                        api_provider="claude.ai",
+                        message=f"{expired_str}에 만료됨. 다시 로그인하세요.",
+                    )
+
                 return AuthStatusResponse(
                     logged_in=True,
                     auth_method="oauth",

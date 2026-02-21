@@ -3,7 +3,9 @@
 import asyncio
 import json
 import os
+import time
 import uuid
+from datetime import datetime
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
 import httpx
@@ -19,29 +21,127 @@ logger = structlog.get_logger()
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_API_VERSION = "2023-06-01"
 
+# OAuth constants for token refresh
+OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
+OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 
-def _get_auth_headers() -> Optional[Dict[str, str]]:
-    """Get auth headers from OAuth token, API key, or env var.
+# Last auth error message (accessible by callers)
+_auth_error: Optional[str] = None
 
-    Returns dict with appropriate auth headers, or None if no auth found.
-    """
-    # 1. OAuth token (from Settings page OAuth login)
-    cred_path = os.path.join(
+
+def _get_cred_path() -> str:
+    return os.path.join(
         os.environ.get(
             "CLAUDE_CONFIG_DIR",
             os.path.join(os.path.expanduser("~"), ".claude"),
         ),
         ".credentials.json",
     )
+
+
+async def _refresh_oauth_token(refresh_token: str, cred_path: str) -> Optional[Dict[str, str]]:
+    """Refresh OAuth access token using the stored refresh token."""
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                OAUTH_TOKEN_URL,
+                json={
+                    "grant_type": "refresh_token",
+                    "refresh_token": refresh_token,
+                    "client_id": OAUTH_CLIENT_ID,
+                },
+                headers={"Content-Type": "application/json"},
+            )
+
+            if resp.status_code != 200:
+                logger.warning(
+                    "Token refresh failed",
+                    status=resp.status_code,
+                    body=resp.text[:200],
+                )
+                return None
+
+            tokens = resp.json()
+            new_access = tokens.get("access_token")
+            if not new_access:
+                return None
+
+            # Save updated tokens
+            existing = {}
+            if os.path.exists(cred_path):
+                with open(cred_path) as f:
+                    existing = json.load(f)
+
+            expires_in = tokens.get("expires_in", 3600)
+            expires_at = int(time.time() + expires_in) * 1000
+
+            existing["claudeAiOauth"] = {
+                "accessToken": new_access,
+                "refreshToken": tokens.get("refresh_token", refresh_token),
+                "expiresAt": expires_at,
+                "scopes": existing.get("claudeAiOauth", {}).get("scopes", []),
+            }
+
+            with open(cred_path, "w") as f:
+                json.dump(existing, f)
+            os.chmod(cred_path, 0o600)
+
+            logger.info("OAuth token refreshed successfully", expires_in=expires_in)
+            return {"Authorization": f"Bearer {new_access}"}
+    except Exception as e:
+        logger.error("Token refresh error", error=str(e))
+        return None
+
+
+async def _get_auth_headers() -> Optional[Dict[str, str]]:
+    """Get auth headers from OAuth token, API key, or env var.
+
+    Auto-refreshes expired OAuth tokens using the refresh token.
+    Returns dict with appropriate auth headers, or None if no auth found.
+    """
+    global _auth_error
+    _auth_error = None
+
+    # 1. OAuth token (from Settings page OAuth login)
+    cred_path = _get_cred_path()
     if os.path.exists(cred_path):
         try:
             with open(cred_path) as f:
                 creds = json.load(f)
             oauth = creds.get("claudeAiOauth", {})
             token = oauth.get("accessToken")
+            refresh_token = oauth.get("refreshToken")
+            expires_at = oauth.get("expiresAt", 0)
+
             if token:
-                logger.info("Using OAuth token for API auth")
-                return {"Authorization": f"Bearer {token}"}
+                now_ms = int(time.time() * 1000)
+
+                # Token still valid (with 5-min buffer)
+                if expires_at > now_ms + 300_000:
+                    return {"Authorization": f"Bearer {token}"}
+
+                # Token expired or about to expire — try refresh
+                if refresh_token:
+                    logger.info("Access token expired, attempting auto-refresh")
+                    refreshed = await _refresh_oauth_token(refresh_token, cred_path)
+                    if refreshed:
+                        return refreshed
+
+                # Refresh failed or no refresh token
+                if expires_at > 0:
+                    expired_time = datetime.fromtimestamp(expires_at / 1000)
+                    expired_str = expired_time.strftime("%Y-%m-%d %H:%M:%S")
+                    _auth_error = (
+                        f"OAuth 토큰이 {expired_str}에 만료되었습니다. "
+                        "Settings 페이지에서 다시 로그인하세요."
+                    )
+                else:
+                    _auth_error = (
+                        "OAuth 토큰이 만료되었습니다. "
+                        "Settings 페이지에서 다시 로그인하세요."
+                    )
+                logger.warning("OAuth token expired", error=_auth_error)
+                return None
         except Exception:
             pass
 
@@ -100,9 +200,9 @@ class ClaudeProcess:
     ) -> bool:
         """Start Anthropic API streaming call."""
         self.last_error = None
-        auth_headers = _get_auth_headers()
+        auth_headers = await _get_auth_headers()
         if not auth_headers:
-            self.last_error = (
+            self.last_error = _auth_error or (
                 "인증이 설정되지 않았습니다. "
                 "Settings 페이지에서 OAuth 로그인하거나 API 키를 설정하세요."
             )
@@ -341,7 +441,7 @@ class ClaudeManager:
 
     async def get_version(self) -> str:
         """Return API mode version string."""
-        auth = _get_auth_headers()
+        auth = await _get_auth_headers()
         if auth:
             mode = "OAuth" if "Authorization" in auth else "API-key"
             return f"API-direct ({mode})"

@@ -31,6 +31,7 @@ export interface AuthStatus {
   logged_in: boolean;
   auth_method: string;
   api_provider?: string;
+  message?: string;
 }
 
 export interface LoginStartResponse {

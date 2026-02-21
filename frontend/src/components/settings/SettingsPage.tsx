@@ -207,9 +207,14 @@ export default function SettingsPage() {
               <span className="text-sm">
                 {authStatus.logged_in
                   ? `인증됨 (${authStatus.auth_method === 'oauth' ? 'OAuth / Claude Max' : authStatus.auth_method === 'api_key' ? 'API 키' : authStatus.auth_method})`
-                  : '인증되지 않음'}
+                  : authStatus.auth_method === 'oauth_expired'
+                    ? '인증 만료됨'
+                    : '인증되지 않음'}
               </span>
             </div>
+            {authStatus.message && (
+              <p className="text-xs text-yellow-400 mt-2 ml-4">{authStatus.message}</p>
+            )}
           </div>
         )}
       </Section>
