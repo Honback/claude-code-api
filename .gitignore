@@ -1,0 +1,45 @@
+# Environment
+.env
+*.env.local
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Java/Maven
+backend/target/
+*.class
+*.jar
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Docker
+docker-compose.override.yml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# claude-code-api
+claude-code-api/
+
+# E2E / Playwright
+node_modules/
+test-results/
+e2e/screenshots/
+
+# bkit internal
+docs/.pdca-snapshots/
+docs/.pdca-status.json
+docs/.bkit-memory.json
+
+# Claude Code memory
+.claude/

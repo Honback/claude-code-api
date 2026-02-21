@@ -1,0 +1,12 @@
+FROM eclipse-temurin:21-jdk-alpine
+WORKDIR /app
+
+RUN apk add --no-cache maven curl
+
+COPY pom.xml .
+RUN mvn dependency:resolve
+
+COPY src ./src
+
+EXPOSE 8080
+CMD ["mvn", "spring-boot:run"]

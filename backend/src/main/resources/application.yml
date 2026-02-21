@@ -1,0 +1,40 @@
+spring:
+  datasource:
+    url: ${SPRING_DATASOURCE_URL}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+
+server:
+  port: 8080
+
+app:
+  jwt:
+    secret: ${JWT_SECRET}
+    expiration: ${JWT_EXPIRATION:86400000}
+  claude-code-api:
+    url: ${CLAUDE_CODE_API_URL:http://claude-code-api:8000}
+  claude-config-path: ${CLAUDE_CONFIG_PATH:/claude-config}
+  context:
+    enabled: ${APP_CONTEXT_ENABLED:true}
+    summarization-threshold-tokens: ${APP_CONTEXT_THRESHOLD:8000}
+    recent-messages-to-keep: ${APP_CONTEXT_RECENT_MESSAGES:6}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
