@@ -2,20 +2,27 @@ FROM python:3.12-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Install runtime + build dependencies (needed for cryptography, bcrypt, greenlet on ARM)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl git && rm -rf /var/lib/apt/lists/*
+    ca-certificates curl git \
+    build-essential libffi-dev libssl-dev pkg-config \
+    && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
 RUN useradd -m -s /bin/bash claudeuser
 WORKDIR /home/claudeuser/app
-COPY . /home/claudeuser/app
+
+# Copy and install dependencies first (better caching)
+COPY pyproject.toml setup.py setup.cfg ./
+COPY claude_code_api/__init__.py claude_code_api/__init__.py
+COPY claude_code_api/config/ claude_code_api/config/
 RUN chown -R claudeuser:claudeuser /home/claudeuser/app
 
 USER claudeuser
+RUN pip install --no-cache-dir --user -e .
 
-# Install Python dependencies
-RUN pip install --no-cache-dir --user -e . 2>/dev/null || \
-    pip install --no-cache-dir --user -e .
+# Copy remaining source
+COPY --chown=claudeuser:claudeuser . /home/claudeuser/app
 
 ENV PATH="/home/claudeuser/.local/bin:${PATH}"
 
