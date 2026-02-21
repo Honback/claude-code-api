@@ -1,7 +1,7 @@
-FROM eclipse-temurin:21-jdk-alpine
+FROM bellsoft/liberica-openjdk-debian:21
 WORKDIR /app
 
-RUN apk add --no-cache maven curl
+RUN apt-get update && apt-get install -y --no-install-recommends maven curl && rm -rf /var/lib/apt/lists/*
 
 COPY pom.xml .
 RUN mvn dependency:resolve
