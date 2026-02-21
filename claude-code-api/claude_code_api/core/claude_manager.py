@@ -1,166 +1,61 @@
-"""Claude API direct call management (no CLI dependency)."""
+"""Claude Code CLI subprocess management.
+
+Uses the Claude Code CLI as a subprocess to handle API calls.
+The CLI manages OAuth authentication internally, so no API key
+is required when the user has a Claude Max/Pro subscription.
+"""
 
 import asyncio
 import json
 import os
-import time
+import shutil
 import uuid
-from datetime import datetime
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
-import httpx
 import structlog
 
-from claude_code_api.models.claude import get_available_models, get_default_model
+from claude_code_api.models.claude import (
+    get_available_models,
+    get_default_model,
+    validate_claude_model,
+)
 
 from .config import settings
 from .security import ensure_directory_within_base
 
 logger = structlog.get_logger()
 
-ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
-ANTHROPIC_API_VERSION = "2023-06-01"
 
-# OAuth constants for token refresh
-OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
-OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+def _find_claude_binary() -> str:
+    """Find the claude CLI binary."""
+    env_path = os.environ.get("CLAUDE_BINARY_PATH")
+    if env_path and os.path.exists(env_path):
+        return env_path
 
-# Last auth error message (accessible by callers)
-_auth_error: Optional[str] = None
+    claude_path = shutil.which("claude")
+    if claude_path:
+        return claude_path
 
+    # Check common npm global locations
+    common_paths = [
+        "/usr/local/bin/claude",
+        "/usr/bin/claude",
+        os.path.expanduser("~/.local/bin/claude"),
+    ]
+    for path in common_paths:
+        if os.path.exists(path):
+            return path
 
-def _get_cred_path() -> str:
-    return os.path.join(
-        os.environ.get(
-            "CLAUDE_CONFIG_DIR",
-            os.path.join(os.path.expanduser("~"), ".claude"),
-        ),
-        ".credentials.json",
-    )
-
-
-async def _refresh_oauth_token(refresh_token: str, cred_path: str) -> Optional[Dict[str, str]]:
-    """Refresh OAuth access token using the stored refresh token."""
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                OAUTH_TOKEN_URL,
-                json={
-                    "grant_type": "refresh_token",
-                    "refresh_token": refresh_token,
-                    "client_id": OAUTH_CLIENT_ID,
-                },
-                headers={"Content-Type": "application/json"},
-            )
-
-            if resp.status_code != 200:
-                logger.warning(
-                    "Token refresh failed",
-                    status=resp.status_code,
-                    body=resp.text[:200],
-                )
-                return None
-
-            tokens = resp.json()
-            new_access = tokens.get("access_token")
-            if not new_access:
-                return None
-
-            # Save updated tokens
-            existing = {}
-            if os.path.exists(cred_path):
-                with open(cred_path) as f:
-                    existing = json.load(f)
-
-            expires_in = tokens.get("expires_in", 3600)
-            expires_at = int(time.time() + expires_in) * 1000
-
-            existing["claudeAiOauth"] = {
-                "accessToken": new_access,
-                "refreshToken": tokens.get("refresh_token", refresh_token),
-                "expiresAt": expires_at,
-                "scopes": existing.get("claudeAiOauth", {}).get("scopes", []),
-            }
-
-            with open(cred_path, "w") as f:
-                json.dump(existing, f)
-            os.chmod(cred_path, 0o600)
-
-            logger.info("OAuth token refreshed successfully", expires_in=expires_in)
-            return {"Authorization": f"Bearer {new_access}"}
-    except Exception as e:
-        logger.error("Token refresh error", error=str(e))
-        return None
-
-
-async def _get_auth_headers() -> Optional[Dict[str, str]]:
-    """Get auth headers for Anthropic API calls.
-
-    Priority: API key > environment variable > settings.
-    OAuth tokens are NOT supported by api.anthropic.com — if only OAuth
-    is available, returns None with a descriptive error.
-    """
-    global _auth_error
-    _auth_error = None
-
-    # 1. API key from config file (Settings page)
-    config_path = os.path.join(
-        os.path.expanduser("~"), ".config", "claude", "config.json"
-    )
-    if os.path.exists(config_path):
-        try:
-            with open(config_path) as f:
-                config = json.load(f)
-            key = config.get("apiKey", "")
-            if key and key.startswith("sk-"):
-                logger.info("Using API key from config file")
-                return {"x-api-key": key}
-        except Exception:
-            pass
-
-    # 2. Environment variable
-    env_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if env_key and env_key.startswith("sk-"):
-        logger.info("Using API key from environment")
-        return {"x-api-key": env_key}
-
-    # 3. Settings
-    if settings.claude_api_key and settings.claude_api_key.startswith("sk-"):
-        logger.info("Using API key from settings")
-        return {"x-api-key": settings.claude_api_key}
-
-    # 4. Check if OAuth is available — inform user it doesn't work for API calls
-    cred_path = _get_cred_path()
-    has_oauth = False
-    if os.path.exists(cred_path):
-        try:
-            with open(cred_path) as f:
-                creds = json.load(f)
-            oauth = creds.get("claudeAiOauth", {})
-            if oauth.get("accessToken"):
-                has_oauth = True
-        except Exception:
-            pass
-
-    if has_oauth:
-        _auth_error = (
-            "OAuth 로그인은 되어있지만, Anthropic API는 OAuth 인증을 지원하지 않습니다. "
-            "Settings 페이지에서 API Key를 입력하세요. "
-            "(console.anthropic.com에서 발급 가능)"
-        )
-        logger.warning("OAuth available but not usable for API calls")
-    else:
-        _auth_error = (
-            "인증이 설정되지 않았습니다. "
-            "Settings 페이지에서 API Key를 입력하세요. "
-            "(console.anthropic.com에서 발급 가능)"
-        )
-
-    return None
+    return "claude"
 
 
 class ClaudeProcess:
-    """Manages a single Anthropic API call (replaces CLI subprocess)."""
+    """Manages a Claude Code CLI subprocess.
+
+    The CLI handles OAuth authentication internally, reading credentials
+    from ~/.claude/.credentials.json. No direct API key is needed for
+    users with Claude Max/Pro subscriptions.
+    """
 
     def __init__(
         self,
@@ -172,7 +67,7 @@ class ClaudeProcess:
         self.session_id = session_id
         self.cli_session_id: Optional[str] = None
         self.project_path = project_path
-        self.process = None  # kept for interface compatibility
+        self.process: Optional[asyncio.subprocess.Process] = None
         self.is_running = False
         self.output_queue: asyncio.Queue[Optional[Dict[str, Any]]] = asyncio.Queue()
         self._on_cli_session_id = on_cli_session_id
@@ -186,188 +81,136 @@ class ClaudeProcess:
         model: Optional[str] = None,
         system_prompt: Optional[str] = None,
     ) -> bool:
-        """Start Anthropic API streaming call."""
+        """Start Claude CLI subprocess."""
         self.last_error = None
-        auth_headers = await _get_auth_headers()
-        if not auth_headers:
-            self.last_error = _auth_error or (
-                "인증이 설정되지 않았습니다. "
-                "Settings 페이지에서 OAuth 로그인하거나 API 키를 설정하세요."
-            )
-            logger.error("No auth configured", session_id=self.session_id)
-            return False
 
-        resolved_model = model or get_default_model()
+        claude_binary = _find_claude_binary()
+        resolved_model = validate_claude_model(model) if model else get_default_model()
+
+        cmd = [
+            claude_binary,
+            "-p", prompt,
+            "--output-format", "stream-json",
+            "--model", resolved_model,
+            "--max-turns", "1",
+        ]
+
+        if system_prompt:
+            cmd.extend(["--system-prompt", system_prompt])
+
         logger.info(
-            "Starting Anthropic API call",
+            "Starting Claude CLI subprocess",
             session_id=self.session_id,
             model=resolved_model,
+            binary=claude_binary,
         )
 
-        # Generate a session ID for compatibility
-        self.cli_session_id = str(uuid.uuid4())
-        if self._on_cli_session_id:
-            self._on_cli_session_id(self.cli_session_id)
-
-        self.is_running = True
-        self._task = asyncio.create_task(
-            self._stream_api_call(auth_headers, prompt, resolved_model, system_prompt)
-        )
-        return True
-
-    async def _stream_api_call(
-        self,
-        auth_headers: Dict[str, str],
-        prompt: str,
-        model: str,
-        system_prompt: Optional[str],
-    ) -> None:
-        """Make streaming API call to Anthropic and queue output."""
         try:
-            body: Dict[str, Any] = {
-                "model": model,
-                "max_tokens": 8192,
-                "stream": True,
-                "messages": [{"role": "user", "content": prompt}],
-            }
-            if system_prompt:
-                body["system"] = system_prompt
-
-            # Determine auth method for logging
-            auth_method = "Bearer" if "Authorization" in auth_headers else "x-api-key"
-            logger.info(
-                "Calling Anthropic API",
-                url=ANTHROPIC_API_URL,
-                model=model,
-                auth_method=auth_method,
-                prompt_length=len(prompt),
-                has_system_prompt=bool(system_prompt),
+            self.process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                stdin=asyncio.subprocess.PIPE,
             )
 
-            headers = {
-                **auth_headers,
-                "anthropic-version": ANTHROPIC_API_VERSION,
-                "content-type": "application/json",
-                "accept": "text/event-stream",
-            }
+            # CRITICAL: Close stdin immediately to prevent CLI from hanging.
+            # The prompt is passed via -p flag, not stdin.
+            self.process.stdin.close()
 
-            # Collect text and usage as we stream
-            full_text = ""
-            input_tokens = 0
-            output_tokens = 0
+            self.is_running = True
 
-            async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
-                async with client.stream(
-                    "POST", ANTHROPIC_API_URL, json=body, headers=headers
-                ) as response:
-                    if response.status_code != 200:
-                        error_body = await response.aread()
-                        error_text = error_body.decode()
-                        self.last_error = f"Anthropic API error {response.status_code}: {error_text[:200]}"
-                        logger.error(
-                            "API call failed",
-                            status=response.status_code,
-                            error=error_text[:500],
-                        )
-                        # Propagate error to SSE stream
-                        await self.output_queue.put(
-                            {
-                                "type": "error",
-                                "error": self.last_error,
-                                "session_id": self.cli_session_id,
-                            }
-                        )
-                        return
+            self.cli_session_id = str(uuid.uuid4())
+            if self._on_cli_session_id:
+                self._on_cli_session_id(self.cli_session_id)
 
-                    event_type = ""
-                    async for line in response.aiter_lines():
-                        if not line:
-                            continue
-                        if line.startswith("event: "):
-                            event_type = line[7:].strip()
-                            continue
-                        if not line.startswith("data: "):
-                            continue
+            self._task = asyncio.create_task(self._read_output())
+            return True
 
-                        data_str = line[6:].strip()
-                        if not data_str:
-                            continue
-
-                        try:
-                            data = json.loads(data_str)
-                        except json.JSONDecodeError:
-                            continue
-
-                        if event_type == "message_start":
-                            msg = data.get("message", {})
-                            usage = msg.get("usage", {})
-                            input_tokens = usage.get("input_tokens", 0)
-
-                        elif event_type == "content_block_delta":
-                            delta = data.get("delta", {})
-                            if delta.get("type") == "text_delta":
-                                text = delta.get("text", "")
-                                if text:
-                                    full_text += text
-                                    # Yield as assistant message for streaming
-                                    await self.output_queue.put(
-                                        {
-                                            "type": "assistant",
-                                            "message": {
-                                                "role": "assistant",
-                                                "content": [
-                                                    {"type": "text", "text": text}
-                                                ],
-                                            },
-                                            "session_id": self.cli_session_id,
-                                        }
-                                    )
-
-                        elif event_type == "message_delta":
-                            usage = data.get("usage", {})
-                            output_tokens = usage.get("output_tokens", 0)
-
-                        elif event_type == "message_stop":
-                            pass
-
-                        elif event_type == "error":
-                            error_msg = data.get("error", {}).get(
-                                "message", "Unknown error"
-                            )
-                            self.last_error = error_msg
-                            logger.error("Stream error", error=error_msg)
-
-            # Yield final result message
-            total_tokens = input_tokens + output_tokens
-            await self.output_queue.put(
-                {
-                    "type": "result",
-                    "subtype": "success",
-                    "result": full_text,
-                    "session_id": self.cli_session_id,
-                    "usage": {
-                        "input_tokens": input_tokens,
-                        "output_tokens": output_tokens,
-                    },
-                    "cost_usd": 0.0,
-                }
+        except FileNotFoundError:
+            self.last_error = (
+                "Claude CLI를 찾을 수 없습니다. "
+                "Docker 이미지에 @anthropic-ai/claude-code가 설치되어 있는지 확인하세요."
             )
+            logger.error("Claude CLI not found", binary=claude_binary)
+            return False
+        except Exception as e:
+            self.last_error = f"CLI 시작 실패: {e}"
+            logger.error("Failed to start CLI", error=str(e))
+            return False
 
-        except httpx.TimeoutException:
-            self.last_error = "API call timed out"
-            logger.error("API timeout", session_id=self.session_id)
-            await self.output_queue.put(
-                {
-                    "type": "error",
-                    "error": self.last_error,
-                    "session_id": self.cli_session_id,
-                }
-            )
+    async def _read_output(self) -> None:
+        """Read JSONL output from CLI stdout and queue messages."""
+        try:
+            stderr_chunks: list[bytes] = []
+
+            # Start collecting stderr in background
+            async def _drain_stderr():
+                if self.process and self.process.stderr:
+                    while True:
+                        chunk = await self.process.stderr.read(4096)
+                        if not chunk:
+                            break
+                        stderr_chunks.append(chunk)
+
+            stderr_task = asyncio.create_task(_drain_stderr())
+
+            # Read stdout line by line (JSONL)
+            while self.process and self.process.stdout:
+                line = await self.process.stdout.readline()
+                if not line:
+                    break
+
+                line_str = line.decode("utf-8", errors="replace").strip()
+                if not line_str:
+                    continue
+
+                try:
+                    message = json.loads(line_str)
+                    await self.output_queue.put(message)
+
+                    # Extract session_id from messages
+                    msg_sid = message.get("session_id")
+                    if msg_sid and self.cli_session_id != msg_sid:
+                        self.cli_session_id = msg_sid
+                        if self._on_cli_session_id:
+                            self._on_cli_session_id(self.cli_session_id)
+
+                except json.JSONDecodeError:
+                    logger.debug("Non-JSON line from CLI", line=line_str[:200])
+
+            # Wait for stderr to finish
+            await stderr_task
+
+            # Wait for process to complete
+            if self.process:
+                await self.process.wait()
+                return_code = self.process.returncode
+
+                if return_code != 0:
+                    stderr_text = b"".join(stderr_chunks).decode(
+                        "utf-8", errors="replace"
+                    ).strip()
+                    self.last_error = f"CLI exited with code {return_code}"
+                    if stderr_text:
+                        # Extract meaningful error from stderr
+                        error_summary = stderr_text[:500]
+                        self.last_error += f": {error_summary}"
+                    logger.error(
+                        "CLI process failed",
+                        return_code=return_code,
+                        stderr=stderr_text[:500] if stderr_text else "",
+                    )
+                    await self.output_queue.put(
+                        {
+                            "type": "error",
+                            "error": self.last_error,
+                            "session_id": self.cli_session_id,
+                        }
+                    )
+
         except Exception as e:
             self.last_error = str(e)
-            logger.error(
-                "API call failed", session_id=self.session_id, error=str(e)
-            )
+            logger.error("Error reading CLI output", error=str(e))
             await self.output_queue.put(
                 {
                     "type": "error",
@@ -382,7 +225,7 @@ class ClaudeProcess:
                 self._on_end(self)
 
     async def get_output(self) -> AsyncGenerator[Dict[str, Any], None]:
-        """Get output from API call."""
+        """Get output from CLI process."""
         while True:
             try:
                 output = await asyncio.wait_for(
@@ -404,15 +247,24 @@ class ClaudeProcess:
                 break
 
     async def send_input(self, text: str):
-        """No-op for API mode. Use a new request for follow-up."""
+        """No-op for non-interactive mode."""
         logger.warning(
-            "send_input not supported in API mode",
+            "send_input not supported in non-interactive mode",
             session_id=self.session_id,
         )
 
     async def stop(self):
-        """Stop the API call."""
+        """Stop the CLI subprocess."""
         self.is_running = False
+        if self.process and self.process.returncode is None:
+            try:
+                self.process.terminate()
+                await asyncio.wait_for(self.process.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                self.process.kill()
+                await self.process.wait()
+            except Exception:
+                pass
         if self._task and not self._task.done():
             self._task.cancel()
             try:
@@ -452,7 +304,7 @@ class ClaudeModelNotSupportedError(ClaudeManagerError):
 
 
 class ClaudeManager:
-    """Manages multiple Claude API sessions."""
+    """Manages multiple Claude CLI sessions."""
 
     def __init__(self):
         self.processes: Dict[str, ClaudeProcess] = {}
@@ -461,12 +313,19 @@ class ClaudeManager:
         self._session_lock = asyncio.Lock()
 
     async def get_version(self) -> str:
-        """Return API mode version string."""
-        auth = await _get_auth_headers()
-        if auth:
-            mode = "OAuth" if "Authorization" in auth else "API-key"
-            return f"API-direct ({mode})"
-        return "API-direct (no auth configured)"
+        """Return CLI version string."""
+        try:
+            binary = _find_claude_binary()
+            proc = await asyncio.create_subprocess_exec(
+                binary, "--version",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+            version = stdout.decode().strip()
+            return f"CLI ({version})" if version else "CLI (unknown version)"
+        except Exception:
+            return "CLI (version check failed)"
 
     async def create_session(
         self,
@@ -477,9 +336,8 @@ class ClaudeManager:
         system_prompt: Optional[str] = None,
         on_cli_session_id: Optional[Callable[[str], None]] = None,
     ) -> ClaudeProcess:
-        """Create new Claude session via API."""
+        """Create new Claude session via CLI."""
         async with self._session_lock:
-            # Check capacity
             existing = self.processes.get(session_id)
             if existing and existing.is_running:
                 raise ClaudeSessionConflictError(
@@ -509,7 +367,7 @@ class ClaudeManager:
             )
             if not success:
                 raise ClaudeProcessStartError(
-                    process.last_error or "Failed to start API call"
+                    process.last_error or "Failed to start CLI process"
                 )
 
             self.processes[session_id] = process
@@ -550,7 +408,7 @@ class ClaudeManager:
         return list(self.processes.keys())
 
     async def continue_conversation(self, session_id: str, prompt: str) -> bool:
-        logger.warning("continue_conversation not supported in API mode")
+        logger.warning("continue_conversation not supported in non-interactive mode")
         return False
 
     def _register_cli_session(self, api_session_id: str, cli_session_id: str):
@@ -583,10 +441,10 @@ def create_project_directory(project_id: str) -> str:
 def cleanup_project_directory(project_path: str):
     """Clean up project directory."""
     try:
-        import shutil
+        import shutil as _shutil
 
         if os.path.exists(project_path):
-            shutil.rmtree(project_path)
+            _shutil.rmtree(project_path)
             logger.info("Project directory cleaned up", path=project_path)
     except Exception as e:
         logger.error(
@@ -595,5 +453,6 @@ def cleanup_project_directory(project_path: str):
 
 
 def validate_claude_binary() -> bool:
-    """Always returns True in API-direct mode."""
-    return True
+    """Check if Claude CLI binary is available."""
+    binary = _find_claude_binary()
+    return shutil.which(binary) is not None or os.path.exists(binary)

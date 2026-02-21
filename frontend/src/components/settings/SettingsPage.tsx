@@ -222,73 +222,11 @@ export default function SettingsPage() {
         )}
       </Section>
 
-      {/* Warning: OAuth only - no API key */}
-      {authStatus?.logged_in && authStatus.auth_method === 'oauth' && settings && !settings.hasApiKey && (
-        <div className="bg-yellow-900/30 border border-yellow-600 rounded-lg p-4">
-          <p className="text-sm font-medium text-yellow-300">
-            Anthropic API Key가 필요합니다
-          </p>
-          <p className="text-xs text-yellow-200/70 mt-1">
-            OAuth 로그인은 완료되었지만, 채팅 기능은 Anthropic API Key가 필요합니다.
-            아래 Step 1에서 API Key를 입력하세요. (console.anthropic.com 에서 발급)
-          </p>
-        </div>
-      )}
-
-      {/* Step 1: Anthropic API Key (REQUIRED for chat) */}
+      {/* Step 1: OAuth Login (PRIMARY - Claude Max/Pro subscription) */}
       <Section
         step={1}
-        title="Anthropic API 키 설정"
-        description="채팅에 필요합니다. console.anthropic.com 에서 발급받으세요. (종량제 과금)"
-      >
-        {settings && (
-          <div className="mb-4 p-3 rounded bg-gray-700">
-            <div className="flex items-center gap-2">
-              <StatusDot active={settings.hasApiKey} />
-              <span className="text-sm">
-                {settings.hasApiKey
-                  ? `설정됨: ${settings.apiKeyMasked}`
-                  : '아직 설정되지 않았습니다'}
-              </span>
-            </div>
-            {settings.updatedAt && (
-              <p className="text-xs text-gray-500 mt-1 ml-4">
-                마지막 수정: {new Date(settings.updatedAt).toLocaleString()}
-              </p>
-            )}
-          </div>
-        )}
-
-        <div className="flex gap-3">
-          <input
-            type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder="sk-ant-api03-..."
-            className="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
-            onKeyDown={(e) => e.key === 'Enter' && handleSave()}
-          />
-          <button
-            onClick={handleSave}
-            disabled={saving || !apiKey.trim()}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded text-sm font-medium transition-colors"
-          >
-            {saving ? '저장 중...' : '저장'}
-          </button>
-        </div>
-
-        {saveMessage && (
-          <p className={`mt-3 text-sm ${saveMessage.type === 'success' ? 'text-green-400' : 'text-red-400'}`}>
-            {saveMessage.text}
-          </p>
-        )}
-      </Section>
-
-      {/* Step 2: OAuth Login (optional) */}
-      <Section
-        step={2}
-        title="OAuth 로그인 (선택사항)"
-        description="Claude Max/Pro 구독 인증 확인용입니다. 현재 채팅에는 위의 API Key가 필요합니다."
+        title="OAuth 로그인 (Claude Max/Pro)"
+        description="Claude Max/Pro 구독으로 채팅합니다. API 키 없이 사용 가능합니다."
       >
         {authStatus?.logged_in && authStatus.auth_method === 'oauth' ? (
           <div className="p-3 bg-green-900/30 border border-green-700 rounded">
@@ -410,6 +348,55 @@ export default function SettingsPage() {
         )}
       </Section>
 
+      {/* Step 2: Anthropic API Key (optional alternative) */}
+      <Section
+        step={2}
+        title="Anthropic API 키 (선택사항)"
+        description="OAuth 대신 API 키로 직접 인증할 수도 있습니다. console.anthropic.com 에서 발급 (종량제 과금)"
+      >
+        {settings && (
+          <div className="mb-4 p-3 rounded bg-gray-700">
+            <div className="flex items-center gap-2">
+              <StatusDot active={settings.hasApiKey} />
+              <span className="text-sm">
+                {settings.hasApiKey
+                  ? `설정됨: ${settings.apiKeyMasked}`
+                  : '설정되지 않음 (OAuth 사용 시 불필요)'}
+              </span>
+            </div>
+            {settings.updatedAt && (
+              <p className="text-xs text-gray-500 mt-1 ml-4">
+                마지막 수정: {new Date(settings.updatedAt).toLocaleString()}
+              </p>
+            )}
+          </div>
+        )}
+
+        <div className="flex gap-3">
+          <input
+            type="password"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder="sk-ant-api03-..."
+            className="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+            onKeyDown={(e) => e.key === 'Enter' && handleSave()}
+          />
+          <button
+            onClick={handleSave}
+            disabled={saving || !apiKey.trim()}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded text-sm font-medium transition-colors"
+          >
+            {saving ? '저장 중...' : '저장'}
+          </button>
+        </div>
+
+        {saveMessage && (
+          <p className={`mt-3 text-sm ${saveMessage.type === 'success' ? 'text-green-400' : 'text-red-400'}`}>
+            {saveMessage.text}
+          </p>
+        )}
+      </Section>
+
       {/* Step 3: Connection Test */}
       <Section
         step={3}
@@ -525,7 +512,7 @@ export default function SettingsPage() {
         <div className="mb-5 p-4 bg-blue-900/20 border border-blue-800 rounded">
           <h4 className="text-sm font-semibold text-blue-300 mb-2">빠른 시작 가이드</h4>
           <ol className="text-xs text-gray-300 space-y-1 list-decimal list-inside">
-            <li><strong>Step 1</strong>에서 Anthropic API 키를 입력하고 저장합니다.</li>
+            <li><strong>Step 1</strong>에서 OAuth 로그인으로 Claude Max/Pro 구독을 연결합니다.</li>
             <li><strong>Step 3</strong>에서 연결 테스트를 통해 서비스 상태를 확인합니다.</li>
             <li><strong>Step 4</strong>에서 플랫폼 API 키 (cpk_...)를 생성합니다.</li>
             <li>생성된 키를 아래 예제 코드에 넣어 외부 프로젝트에서 호출합니다.</li>
