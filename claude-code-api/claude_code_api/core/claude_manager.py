@@ -94,58 +94,16 @@ async def _refresh_oauth_token(refresh_token: str, cred_path: str) -> Optional[D
 
 
 async def _get_auth_headers() -> Optional[Dict[str, str]]:
-    """Get auth headers from OAuth token, API key, or env var.
+    """Get auth headers for Anthropic API calls.
 
-    Auto-refreshes expired OAuth tokens using the refresh token.
-    Returns dict with appropriate auth headers, or None if no auth found.
+    Priority: API key > environment variable > settings.
+    OAuth tokens are NOT supported by api.anthropic.com — if only OAuth
+    is available, returns None with a descriptive error.
     """
     global _auth_error
     _auth_error = None
 
-    # 1. OAuth token (from Settings page OAuth login)
-    cred_path = _get_cred_path()
-    if os.path.exists(cred_path):
-        try:
-            with open(cred_path) as f:
-                creds = json.load(f)
-            oauth = creds.get("claudeAiOauth", {})
-            token = oauth.get("accessToken")
-            refresh_token = oauth.get("refreshToken")
-            expires_at = oauth.get("expiresAt", 0)
-
-            if token:
-                now_ms = int(time.time() * 1000)
-
-                # Token still valid (with 5-min buffer)
-                if expires_at > now_ms + 300_000:
-                    return {"Authorization": f"Bearer {token}"}
-
-                # Token expired or about to expire — try refresh
-                if refresh_token:
-                    logger.info("Access token expired, attempting auto-refresh")
-                    refreshed = await _refresh_oauth_token(refresh_token, cred_path)
-                    if refreshed:
-                        return refreshed
-
-                # Refresh failed or no refresh token
-                if expires_at > 0:
-                    expired_time = datetime.fromtimestamp(expires_at / 1000)
-                    expired_str = expired_time.strftime("%Y-%m-%d %H:%M:%S")
-                    _auth_error = (
-                        f"OAuth 토큰이 {expired_str}에 만료되었습니다. "
-                        "Settings 페이지에서 다시 로그인하세요."
-                    )
-                else:
-                    _auth_error = (
-                        "OAuth 토큰이 만료되었습니다. "
-                        "Settings 페이지에서 다시 로그인하세요."
-                    )
-                logger.warning("OAuth token expired", error=_auth_error)
-                return None
-        except Exception:
-            pass
-
-    # 2. API key from config file (Settings page)
+    # 1. API key from config file (Settings page)
     config_path = os.path.join(
         os.path.expanduser("~"), ".config", "claude", "config.json"
     )
@@ -155,18 +113,48 @@ async def _get_auth_headers() -> Optional[Dict[str, str]]:
                 config = json.load(f)
             key = config.get("apiKey", "")
             if key and key.startswith("sk-"):
+                logger.info("Using API key from config file")
                 return {"x-api-key": key}
         except Exception:
             pass
 
-    # 3. Environment variable
+    # 2. Environment variable
     env_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if env_key and env_key.startswith("sk-"):
+        logger.info("Using API key from environment")
         return {"x-api-key": env_key}
 
-    # 4. Settings
+    # 3. Settings
     if settings.claude_api_key and settings.claude_api_key.startswith("sk-"):
+        logger.info("Using API key from settings")
         return {"x-api-key": settings.claude_api_key}
+
+    # 4. Check if OAuth is available — inform user it doesn't work for API calls
+    cred_path = _get_cred_path()
+    has_oauth = False
+    if os.path.exists(cred_path):
+        try:
+            with open(cred_path) as f:
+                creds = json.load(f)
+            oauth = creds.get("claudeAiOauth", {})
+            if oauth.get("accessToken"):
+                has_oauth = True
+        except Exception:
+            pass
+
+    if has_oauth:
+        _auth_error = (
+            "OAuth 로그인은 되어있지만, Anthropic API는 OAuth 인증을 지원하지 않습니다. "
+            "Settings 페이지에서 API Key를 입력하세요. "
+            "(console.anthropic.com에서 발급 가능)"
+        )
+        logger.warning("OAuth available but not usable for API calls")
+    else:
+        _auth_error = (
+            "인증이 설정되지 않았습니다. "
+            "Settings 페이지에서 API Key를 입력하세요. "
+            "(console.anthropic.com에서 발급 가능)"
+        )
 
     return None
 
