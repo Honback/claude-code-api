@@ -284,13 +284,14 @@ export default function SettingsPage() {
                 {/* Code input - shown automatically for remote access, collapsible for localhost */}
                 {oauthManual ? (
                   <div className="p-4 bg-gray-700 rounded">
-                    <p className="text-sm text-gray-300 mb-2">로그인 후 표시되는 Authentication Code를 입력하세요:</p>
+                    <p className="text-sm text-gray-300 mb-2">로그인 후, 빈 페이지의 <strong>URL 바에서 주소 전체</strong>를 복사하여 아래에 붙여넣으세요:</p>
+                    <p className="text-xs text-gray-500 mb-3">예: http://localhost:9090/callback?code=abc123&state=xyz (URL 전체 또는 code 값만 입력 가능)</p>
                     <div className="flex gap-3">
                       <input
                         type="text"
                         value={oauthCode}
                         onChange={(e) => setOauthCode(e.target.value)}
-                        placeholder="Authentication Code 붙여넣기"
+                        placeholder="URL 전체 또는 code 값 붙여넣기"
                         className="flex-1 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500 font-mono"
                         onKeyDown={(e) => e.key === 'Enter' && handleOAuthSubmitCode()}
                       />
@@ -307,13 +308,13 @@ export default function SettingsPage() {
                   <details className="text-xs">
                     <summary className="text-gray-500 hover:text-gray-400 cursor-pointer">수동 입력 (자동 인증이 안 될 경우)</summary>
                     <div className="p-4 bg-gray-700 rounded mt-2">
-                      <p className="text-sm text-gray-300 mb-2">로그인 후 표시되는 Authentication Code를 입력하세요:</p>
+                      <p className="text-sm text-gray-300 mb-2">URL 바에서 전체 주소를 복사하여 붙여넣으세요:</p>
                       <div className="flex gap-3">
                         <input
                           type="text"
                           value={oauthCode}
                           onChange={(e) => setOauthCode(e.target.value)}
-                          placeholder="Authentication Code 붙여넣기"
+                          placeholder="URL 전체 또는 code 값 붙여넣기"
                           className="flex-1 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500 font-mono"
                           onKeyDown={(e) => e.key === 'Enter' && handleOAuthSubmitCode()}
                         />

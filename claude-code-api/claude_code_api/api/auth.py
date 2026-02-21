@@ -143,14 +143,12 @@ async def login_start(request: LoginStartRequest = LoginStartRequest()) -> Login
 
     from urllib.parse import urlencode
 
-    # Determine redirect URI based on access origin
-    # - localhost: automatic redirect to our nginx callback
-    # - remote IP/hostname: use Claude's manual code display page
+    # Always use localhost redirect URI for reliable token exchange.
+    # - localhost access: nginx handles callback automatically
+    # - remote access: redirect fails on user's machine, but URL bar shows
+    #   the full URL with code parameter. User copies and pastes it.
     is_localhost = not request.serverUrl or "localhost" in request.serverUrl or "127.0.0.1" in request.serverUrl
-    if is_localhost:
-        redirect_uri = REDIRECT_URI
-    else:
-        redirect_uri = MANUAL_REDIRECT_URI
+    redirect_uri = REDIRECT_URI
 
     params = {
         "code": "true",  # CLI always includes this
@@ -177,7 +175,7 @@ async def login_start(request: LoginStartRequest = LoginStartRequest()) -> Login
     if is_localhost:
         message = "브라우저에서 로그인하면 자동으로 인증이 완료됩니다."
     else:
-        message = "브라우저에서 로그인 후 표시되는 코드를 아래에 입력하세요."
+        message = "브라우저에서 로그인 후, 빈 페이지의 URL 바에서 주소 전체를 복사하여 아래에 붙여넣으세요."
 
     return LoginStartResponse(
         url=url,
@@ -197,8 +195,18 @@ async def login_code(request: LoginCodeRequest):
             detail="로그인 프로세스가 없습니다. 먼저 'OAuth 로그인 시작'을 클릭하세요.",
         )
 
-    # Clean the authorization code thoroughly
-    raw_code = request.code
+    # Extract code from input - user may paste full URL or just the code
+    raw_code = request.code.strip()
+
+    # If user pasted the full callback URL, extract the code parameter
+    if "code=" in raw_code and ("localhost" in raw_code or "callback" in raw_code):
+        from urllib.parse import parse_qs, urlparse
+        parsed = urlparse(raw_code)
+        qs = parse_qs(parsed.query)
+        if "code" in qs:
+            raw_code = qs["code"][0]
+            logger.info("Extracted code from pasted URL", code_length=len(raw_code))
+
     code = unquote(raw_code.strip())  # URL-decode in case callback page URL-encoded it
     # Remove any non-printable characters or stray whitespace
     code = "".join(c for c in code if c.isprintable() and c != " ")
@@ -231,7 +239,7 @@ async def login_code(request: LoginCodeRequest):
             "state": state,
         }
 
-        logger.info("Token exchange request", url=TOKEN_URL, redirect_uri=REDIRECT_URI, client_id=CLIENT_ID)
+        logger.info("Token exchange request", url=TOKEN_URL, redirect_uri=redirect_uri, client_id=CLIENT_ID)
 
         resp = None
         async with httpx.AsyncClient(timeout=30) as client:
@@ -244,9 +252,9 @@ async def login_code(request: LoginCodeRequest):
 
             logger.info("JSON attempt result", status=resp.status_code)
 
-            # If JSON fails with 401, try form-urlencoded (standard OAuth)
-            if resp.status_code == 401:
-                logger.info("JSON failed with 401, trying form-urlencoded")
+            # If JSON fails with 400 or 401, try form-urlencoded (standard OAuth)
+            if resp.status_code in (400, 401):
+                logger.info("JSON failed, trying form-urlencoded", status=resp.status_code)
                 # Remove state for form-urlencoded attempt (strict OAuth compliance)
                 form_data = {k: v for k, v in token_data.items() if k != "state"}
                 resp = await client.post(
@@ -274,7 +282,7 @@ async def login_code(request: LoginCodeRequest):
                     "code_length": len(code),
                     "code_prefix": code[:8] + "..." if len(code) > 8 else code,
                     "elapsed_seconds": round(elapsed),
-                    "redirect_uri": REDIRECT_URI,
+                    "redirect_uri": redirect_uri,
                     "hint": "콜백 페이지에서 Authentication Code를 정확히 복사했는지 확인하세요. 코드 앞뒤 공백이 없어야 합니다.",
                 },
             }
