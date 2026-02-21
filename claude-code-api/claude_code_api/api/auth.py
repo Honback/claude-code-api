@@ -64,23 +64,49 @@ def _generate_pkce() -> tuple[str, str]:
 
 @router.get("/status")
 async def auth_status() -> AuthStatusResponse:
-    """Check current Claude CLI auth status."""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            _claude_bin(), "auth", "status",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-        data = json.loads(stdout.decode())
+    """Check auth status by reading credential files (no CLI needed)."""
+    # 1. Check OAuth credentials
+    cred_path = _credentials_path()
+    if os.path.exists(cred_path):
+        try:
+            with open(cred_path) as f:
+                creds = json.load(f)
+            oauth = creds.get("claudeAiOauth", {})
+            if oauth.get("accessToken"):
+                return AuthStatusResponse(
+                    logged_in=True,
+                    auth_method="oauth",
+                    api_provider="claude.ai",
+                )
+        except Exception:
+            pass
+
+    # 2. Check API key in config
+    config_path = os.path.join(os.path.expanduser("~"), ".config", "claude", "config.json")
+    if os.path.exists(config_path):
+        try:
+            with open(config_path) as f:
+                config = json.load(f)
+            key = config.get("apiKey", "")
+            if key and key.startswith("sk-"):
+                return AuthStatusResponse(
+                    logged_in=True,
+                    auth_method="api_key",
+                    api_provider="anthropic",
+                )
+        except Exception:
+            pass
+
+    # 3. Check environment variable
+    env_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if env_key and env_key.startswith("sk-"):
         return AuthStatusResponse(
-            logged_in=data.get("loggedIn", False),
-            auth_method=data.get("authMethod", "none"),
-            api_provider=data.get("apiProvider"),
+            logged_in=True,
+            auth_method="api_key",
+            api_provider="anthropic",
         )
-    except Exception as e:
-        logger.error("Failed to check auth status", error=str(e))
-        return AuthStatusResponse(logged_in=False, auth_method="none")
+
+    return AuthStatusResponse(logged_in=False, auth_method="none")
 
 
 @router.post("/login/start")
@@ -282,24 +308,11 @@ async def login_code(request: LoginCodeRequest):
 
 @router.post("/logout")
 async def logout():
-    """Logout from Claude CLI."""
+    """Logout by removing credential files."""
     try:
-        proc = await asyncio.create_subprocess_exec(
-            _claude_bin(), "auth", "logout",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        await asyncio.wait_for(proc.communicate(), timeout=10)
+        cred_path = _credentials_path()
+        if os.path.exists(cred_path):
+            os.remove(cred_path)
         return {"success": True, "message": "로그아웃 완료"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-def _claude_bin() -> str:
-    """Get claude binary path."""
-    home = os.path.expanduser("~")
-    local_bin = os.path.join(home, ".local", "bin", "claude")
-    if os.path.exists(local_bin):
-        return local_bin
-    import shutil
-    return shutil.which("claude") or "claude"

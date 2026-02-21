@@ -48,16 +48,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.claude_manager = ClaudeManager()
     logger.info("Managers initialized", lifecycle=True)
 
-    # Verify Claude Code availability
+    # Check API auth availability (CLI not required)
     try:
-        claude_version = await app.state.claude_manager.get_version()
-        logger.info("Claude Code available", version=claude_version, lifecycle=True)
+        auth_info = await app.state.claude_manager.get_version()
+        logger.info("Auth status", info=auth_info, lifecycle=True)
     except Exception as e:
-        logger.error("Claude Code not available", error=str(e))
-        raise HTTPException(
-            status_code=503,
-            detail="Claude Code CLI not available. Please ensure Claude Code is installed and accessible.",
-        )
+        logger.warning("Auth check failed (will check on first request)", error=str(e))
 
     yield
 
@@ -178,13 +174,11 @@ async def global_exception_handler(request, exc):
 async def health_check():
     """Health check endpoint."""
     try:
-        # Check Claude Code availability
-        claude_version = await app.state.claude_manager.get_version()
-
+        auth_info = await app.state.claude_manager.get_version()
         return {
             "status": "healthy",
             "version": "1.0.0",
-            "claude_version": claude_version,
+            "mode": auth_info,
             "active_sessions": len(app.state.session_manager.active_sessions),
         }
     except Exception as e:
