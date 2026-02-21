@@ -34,6 +34,10 @@ SCOPES = "org:create_api_key user:profile user:inference user:sessions:claude_co
 _oauth_state: dict | None = None
 
 
+class LoginStartRequest(BaseModel):
+    serverUrl: str | None = None
+
+
 class LoginStartResponse(BaseModel):
     url: str
     message: str
@@ -126,11 +130,10 @@ async def auth_status() -> AuthStatusResponse:
 
 
 @router.post("/login/start")
-async def login_start() -> LoginStartResponse:
+async def login_start(request: LoginStartRequest = LoginStartRequest()) -> LoginStartResponse:
     """Start OAuth login - generate PKCE and return authorize URL.
 
-    Uses automatic redirect to our own nginx (localhost:9090/callback)
-    which captures the code automatically - no manual copy-paste needed.
+    Uses the provided serverUrl for redirect, or falls back to localhost.
     """
     global _oauth_state
 
@@ -139,8 +142,12 @@ async def login_start() -> LoginStartResponse:
 
     from urllib.parse import urlencode
 
-    # Use automatic localhost redirect (same pattern as CLI's automatic mode)
-    redirect_uri = REDIRECT_URI
+    # Use serverUrl from frontend if provided, otherwise fallback to localhost
+    if request.serverUrl:
+        redirect_uri = f"{request.serverUrl.rstrip('/')}/callback"
+    else:
+        redirect_uri = REDIRECT_URI
+
     params = {
         "code": "true",  # CLI always includes this
         "client_id": CLIENT_ID,

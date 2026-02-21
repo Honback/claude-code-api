@@ -23,6 +23,7 @@ export default function SettingsPage() {
   const [oauthCode, setOauthCode] = useState('');
   const [oauthLoading, setOauthLoading] = useState(false);
   const [oauthMessage, setOauthMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [serverUrl, setServerUrl] = useState(window.location.origin);
 
   useEffect(() => {
     loadSettings();
@@ -45,7 +46,7 @@ export default function SettingsPage() {
     setOauthUrl(null);
     setOauthCode('');
     try {
-      const result = await settingsApi.startOAuthLogin();
+      const result = await settingsApi.startOAuthLogin(serverUrl);
       setOauthUrl(result.url);
 
       // Open OAuth URL in a new window
@@ -235,13 +236,26 @@ export default function SettingsPage() {
         ) : (
           <>
             {!oauthUrl ? (
-              <button
-                onClick={handleOAuthStart}
-                disabled={oauthLoading}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded text-sm font-medium transition-colors"
-              >
-                {oauthLoading ? 'OAuth 시작 중...' : 'OAuth 로그인 시작'}
-              </button>
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">서버 주소 (OAuth 콜백용)</label>
+                  <input
+                    type="text"
+                    value={serverUrl}
+                    onChange={(e) => setServerUrl(e.target.value)}
+                    placeholder="http://100.89.163.14:9090"
+                    className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500 font-mono"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">현재 브라우저 접속 주소가 자동 입력됩니다. 다른 기기에서 접속하면 해당 주소로 변경하세요.</p>
+                </div>
+                <button
+                  onClick={handleOAuthStart}
+                  disabled={oauthLoading}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded text-sm font-medium transition-colors"
+                >
+                  {oauthLoading ? 'OAuth 시작 중...' : 'OAuth 로그인 시작'}
+                </button>
+              </div>
             ) : (
               <div className="space-y-4">
                 <div className="p-4 bg-blue-900/20 border border-blue-800 rounded">

@@ -49,8 +49,11 @@ export async function getAuthStatus(): Promise<AuthStatus> {
   return apiFetch<AuthStatus>('/settings/auth/status');
 }
 
-export async function startOAuthLogin(): Promise<LoginStartResponse> {
-  return apiFetch<LoginStartResponse>('/settings/auth/login/start', { method: 'POST' });
+export async function startOAuthLogin(serverUrl?: string): Promise<LoginStartResponse> {
+  return apiFetch<LoginStartResponse>('/settings/auth/login/start', {
+    method: 'POST',
+    body: JSON.stringify({ serverUrl: serverUrl || window.location.origin }),
+  });
 }
 
 export async function submitOAuthCode(code: string): Promise<LoginCodeResponse> {
