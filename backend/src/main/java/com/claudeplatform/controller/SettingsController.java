@@ -11,6 +11,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import java.util.Map;
 
 @Slf4j
@@ -21,6 +23,7 @@ public class SettingsController {
 
     private final SettingsService settingsService;
     private final WebClient claudeCodeApiClient;
+    private final ObjectMapper objectMapper;
 
     @GetMapping
     public ResponseEntity<SettingsResponse> getSettings() {
@@ -54,21 +57,22 @@ public class SettingsController {
     }
 
     @GetMapping("/auth/status")
-    public ResponseEntity<String> authStatus() {
+    public ResponseEntity<Map<String, Object>> authStatus() {
         try {
             String result = claudeCodeApiClient.get()
                     .uri("/auth/status")
                     .retrieve()
                     .bodyToMono(String.class)
                     .block(java.time.Duration.ofSeconds(10));
-            return ResponseEntity.ok(result);
+            return ResponseEntity.ok(objectMapper.readValue(result, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {}));
         } catch (Exception e) {
-            return ResponseEntity.status(500).body("{\"error\":\"" + e.getMessage() + "\"}");
+            log.error("Auth status failed", e);
+            return ResponseEntity.status(500).body(Map.of("error", e.getMessage() != null ? e.getMessage() : "Auth status failed"));
         }
     }
 
     @PostMapping("/auth/login/start")
-    public ResponseEntity<String> authLoginStart(@RequestBody(required = false) Map<String, String> body) {
+    public ResponseEntity<Map<String, Object>> authLoginStart(@RequestBody(required = false) Map<String, String> body) {
         try {
             Map<String, String> payload = body != null && body.containsKey("serverUrl")
                     ? Map.of("serverUrl", body.get("serverUrl"))
@@ -79,14 +83,15 @@ public class SettingsController {
                     .retrieve()
                     .bodyToMono(String.class)
                     .block(java.time.Duration.ofSeconds(60));
-            return ResponseEntity.ok(result);
+            return ResponseEntity.ok(objectMapper.readValue(result, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {}));
         } catch (Exception e) {
-            return ResponseEntity.status(500).body("{\"error\":\"" + e.getMessage() + "\"}");
+            log.error("OAuth login start failed", e);
+            return ResponseEntity.status(500).body(Map.of("error", e.getMessage() != null ? e.getMessage() : "OAuth login start failed"));
         }
     }
 
     @PostMapping("/auth/login/code")
-    public ResponseEntity<String> authLoginCode(@RequestBody Map<String, String> body) {
+    public ResponseEntity<Map<String, Object>> authLoginCode(@RequestBody Map<String, String> body) {
         try {
             String result = claudeCodeApiClient.post()
                     .uri("/auth/login/code")
@@ -94,9 +99,10 @@ public class SettingsController {
                     .retrieve()
                     .bodyToMono(String.class)
                     .block(java.time.Duration.ofSeconds(30));
-            return ResponseEntity.ok(result);
+            return ResponseEntity.ok(objectMapper.readValue(result, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {}));
         } catch (Exception e) {
-            return ResponseEntity.status(500).body("{\"error\":\"" + e.getMessage() + "\"}");
+            log.error("OAuth login code failed", e);
+            return ResponseEntity.status(500).body(Map.of("error", e.getMessage() != null ? e.getMessage() : "OAuth code exchange failed"));
         }
     }
 

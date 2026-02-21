@@ -15,8 +15,15 @@ export async function apiFetch<T>(
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Request failed' }));
-    throw new Error(error.error || `HTTP ${response.status}`);
+    const text = await response.text().catch(() => '');
+    let errorMsg = `HTTP ${response.status}`;
+    try {
+      const json = JSON.parse(text);
+      errorMsg = json.error || json.detail || json.message || errorMsg;
+    } catch {
+      if (text.length > 0 && text.length < 200) errorMsg += `: ${text}`;
+    }
+    throw new Error(errorMsg);
   }
 
   if (response.status === 204) {
