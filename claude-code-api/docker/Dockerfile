@@ -2,12 +2,11 @@ FROM python:3.12-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install runtime + build dependencies + Node.js
+# Install runtime + build dependencies + Node.js (from Debian repos for armhf support)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl git \
     build-essential libffi-dev libssl-dev pkg-config \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
+    nodejs npm \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Claude Code CLI globally (handles OAuth internally)
