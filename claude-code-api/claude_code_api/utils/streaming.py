@@ -167,6 +167,24 @@ class OpenAIStreamConverter:
                     saw_assistant_text = saw_assistant_text or saw_text
                     saw_tool_calls = saw_tool_calls or saw_tools
 
+                # Handle "result" messages (from --output-format json fallback)
+                # The result field contains the final response text
+                elif (
+                    self.parser.is_final_message(message)
+                    and message.result
+                    and not saw_assistant_text
+                ):
+                    text_content = message.result.strip()
+                    if text_content:
+                        segments = self._split_into_segments(text_content)
+                        for i, segment in enumerate(segments):
+                            yield SSEFormatter.format_event(
+                                self._build_chunk({"content": segment})
+                            )
+                            if i < len(segments) - 1:
+                                await asyncio.sleep(0.03)
+                        saw_assistant_text = True
+
                 if self.parser.is_final_message(message):
                     break
 
@@ -392,35 +410,31 @@ def _extract_assistant_payload(
             is_assistant=parser.is_assistant_message(normalized),
         )
 
-        if not parser.is_assistant_message(normalized):
-            continue
-
-        text_content = parser.extract_text_content(normalized).strip()
-        logger.info(
-            "Found assistant message",
-            message_index=i,
-            content_length=len(text_content),
-        )
-        logger.debug(
-            "Found assistant message preview",
-            message_index=i,
-            content_preview="<redacted>" if text_content else "empty",
-        )
-        if text_content:
-            content_parts.append(text_content)
+        if parser.is_assistant_message(normalized):
+            text_content = parser.extract_text_content(normalized).strip()
             logger.info(
-                "Extracted assistant text",
+                "Found assistant message",
                 message_index=i,
+                content_length=len(text_content),
             )
-            logger.debug(
-                "Extracted assistant text preview",
-                message_index=i,
-                content_preview="<redacted>",
-            )
+            if text_content:
+                content_parts.append(text_content)
+                logger.info("Extracted assistant text", message_index=i)
 
-        tool_uses = parser.extract_tool_uses(normalized)
-        for tool_use in tool_uses:
-            tool_calls.append(tool_use_to_openai_call(tool_use))
+            tool_uses = parser.extract_tool_uses(normalized)
+            for tool_use in tool_uses:
+                tool_calls.append(tool_use_to_openai_call(tool_use))
+
+        # Handle "result" messages: extract text from result field
+        elif parser.is_final_message(normalized) and normalized.result:
+            result_text = normalized.result.strip()
+            if result_text and not content_parts:
+                content_parts.append(result_text)
+                logger.info(
+                    "Extracted result text",
+                    message_index=i,
+                    content_length=len(result_text),
+                )
 
     return content_parts, tool_calls
 

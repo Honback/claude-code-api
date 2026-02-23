@@ -90,7 +90,8 @@ class ClaudeProcess:
         cmd = [
             claude_binary,
             "-p", prompt,
-            "--output-format", "json",
+            "--output-format", "stream-json",
+            "--verbose",
             "--model", resolved_model,
             "--max-turns", "1",
         ]
