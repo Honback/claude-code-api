@@ -93,7 +93,7 @@ class ClaudeProcess:
             "--output-format", "stream-json",
             "--verbose",
             "--model", resolved_model,
-            "--max-turns", "1",
+            "--max-turns", str(settings.max_turns),
         ]
 
         if system_prompt:

@@ -147,6 +147,7 @@ class Settings(BaseSettings):
     claude_binary_path: str = find_claude_binary()
     claude_api_key: str = ""
     default_model: str = "claude-sonnet-4-5-20250929"
+    max_turns: int = 10
     max_concurrent_sessions: int = 10
     session_timeout_minutes: int = 30
 
