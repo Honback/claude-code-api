@@ -11,6 +11,10 @@ export default function SettingsPage() {
   const [testing, setTesting] = useState(false);
   const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [connectionResult, setConnectionResult] = useState<ConnectionTestResponse | null>(null);
+  const [connectionChecks, setConnectionChecks] = useState<{
+    service?: { ok: boolean; message: string };
+    oauth?: { ok: boolean; method: string; message: string };
+  } | null>(null);
 
   const [platformKeys, setPlatformKeys] = useState<ApiKeyData[]>([]);
   const [newKeyName, setNewKeyName] = useState('');
@@ -154,14 +158,42 @@ export default function SettingsPage() {
   const handleTestConnection = async () => {
     setTesting(true);
     setConnectionResult(null);
+    setConnectionChecks(null);
+
+    const checks: typeof connectionChecks = {};
+
+    // 1. Service health check
     try {
       const result = await settingsApi.testConnection();
-      setConnectionResult(result);
+      checks.service = {
+        ok: result.status === 'connected',
+        message: result.status === 'connected' ? 'API 서비스 정상' : (result.message || '연결 실패'),
+      };
     } catch (err) {
-      setConnectionResult({ status: 'error', message: err instanceof Error ? err.message : '테스트 실패' });
-    } finally {
-      setTesting(false);
+      checks.service = { ok: false, message: err instanceof Error ? err.message : '서비스 연결 실패' };
     }
+
+    // 2. OAuth / Auth status check
+    try {
+      const status = await settingsApi.getAuthStatus();
+      setAuthStatus(status);
+      if (status.logged_in) {
+        const methodLabel = status.auth_method === 'oauth' ? 'OAuth (Claude Max/Pro)' : status.auth_method === 'api_key' ? 'API 키' : status.auth_method;
+        checks.oauth = { ok: true, method: status.auth_method, message: `인증됨: ${methodLabel}` };
+      } else if (status.auth_method === 'oauth_expired') {
+        checks.oauth = { ok: false, method: 'oauth_expired', message: `OAuth 토큰 만료됨${status.message ? ' - ' + status.message : ''}` };
+      } else {
+        checks.oauth = { ok: false, method: 'none', message: '인증되지 않음. Step 1에서 OAuth 로그인하세요.' };
+      }
+    } catch (err) {
+      checks.oauth = { ok: false, method: 'error', message: err instanceof Error ? err.message : '인증 상태 확인 실패' };
+    }
+
+    setConnectionChecks(checks);
+    // Set overall result for backward compatibility
+    const allOk = checks.service?.ok && checks.oauth?.ok;
+    setConnectionResult({ status: allOk ? 'connected' : 'error', message: allOk ? '모든 연결 정상' : '일부 항목 확인 필요' });
+    setTesting(false);
   };
 
   const handleCreateKey = async () => {
@@ -401,26 +433,39 @@ export default function SettingsPage() {
       <Section
         step={3}
         title="연결 테스트"
-        description="Claude Code API 서비스가 정상적으로 실행 중인지 확인합니다."
+        description="API 서비스와 OAuth 인증 상태를 한 번에 확인합니다."
       >
         <button
           onClick={handleTestConnection}
           disabled={testing}
           className="px-4 py-2 bg-gray-600 hover:bg-gray-500 disabled:cursor-not-allowed rounded text-sm font-medium transition-colors"
         >
-          {testing ? '테스트 중...' : '연결 테스트'}
+          {testing ? '확인 중...' : '전체 연결 확인'}
         </button>
 
-        {connectionResult && (
-          <div className={`mt-4 p-3 rounded ${connectionResult.status === 'connected' ? 'bg-green-900/30 border border-green-700' : 'bg-red-900/30 border border-red-700'}`}>
-            <div className="flex items-center gap-2">
-              <StatusDot active={connectionResult.status === 'connected'} error={connectionResult.status === 'error'} />
-              <span className="text-sm font-medium">
-                {connectionResult.status === 'connected' ? '연결 성공' : '연결 실패'}
-              </span>
-            </div>
-            {connectionResult.message && (
-              <p className="text-xs text-gray-400 mt-1 ml-4">{connectionResult.message}</p>
+        {connectionChecks && (
+          <div className="mt-4 space-y-2">
+            {/* Service Health */}
+            <CheckItem
+              ok={connectionChecks.service?.ok ?? false}
+              label="API 서비스"
+              detail={connectionChecks.service?.message || ''}
+            />
+            {/* OAuth Auth */}
+            <CheckItem
+              ok={connectionChecks.oauth?.ok ?? false}
+              label="인증 상태"
+              detail={connectionChecks.oauth?.message || ''}
+            />
+            {/* Overall */}
+            {connectionChecks.service && connectionChecks.oauth && (
+              <div className={`mt-3 p-3 rounded ${connectionChecks.service.ok && connectionChecks.oauth.ok ? 'bg-green-900/30 border border-green-700' : 'bg-yellow-900/30 border border-yellow-700'}`}>
+                <span className="text-sm font-medium">
+                  {connectionChecks.service.ok && connectionChecks.oauth.ok
+                    ? '모든 연결이 정상입니다. 채팅을 시작하세요!'
+                    : '위 항목을 확인해 주세요.'}
+                </span>
+              </div>
             )}
           </div>
         )}
@@ -641,6 +686,18 @@ function Section({ step, title, description, children }: {
 function StatusDot({ active, error }: { active: boolean; error?: boolean }) {
   const color = error ? 'bg-red-400' : active ? 'bg-green-400' : 'bg-yellow-400';
   return <span className={`w-2 h-2 rounded-full shrink-0 ${color}`} />;
+}
+
+function CheckItem({ ok, label, detail }: { ok: boolean; label: string; detail: string }) {
+  return (
+    <div className={`flex items-center gap-3 p-3 rounded ${ok ? 'bg-green-900/20 border border-green-800' : 'bg-red-900/20 border border-red-800'}`}>
+      <span className="text-lg shrink-0">{ok ? '\u2705' : '\u274C'}</span>
+      <div>
+        <span className="text-sm font-medium">{label}</span>
+        <p className="text-xs text-gray-400 mt-0.5">{detail}</p>
+      </div>
+    </div>
+  );
 }
 
 function CodeLine({ label, code }: { label: string; code: string }) {
