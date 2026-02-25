@@ -69,6 +69,95 @@ def _generate_pkce() -> tuple[str, str]:
     return code_verifier, code_challenge
 
 
+# Lock to prevent concurrent refresh attempts
+_refresh_lock = asyncio.Lock()
+
+
+async def _refresh_oauth_token() -> bool:
+    """Refresh OAuth token using the stored refresh_token.
+
+    Returns True if the token was successfully refreshed.
+    """
+    cred_path = _credentials_path()
+    if not os.path.exists(cred_path):
+        return False
+
+    try:
+        with open(cred_path) as f:
+            creds = json.load(f)
+    except Exception:
+        return False
+
+    oauth = creds.get("claudeAiOauth", {})
+    refresh_token = oauth.get("refreshToken")
+    if not refresh_token:
+        logger.warning("No refresh token available")
+        return False
+
+    async with _refresh_lock:
+        # Re-read credentials in case another coroutine already refreshed
+        try:
+            with open(cred_path) as f:
+                creds = json.load(f)
+            oauth = creds.get("claudeAiOauth", {})
+            expires_at = oauth.get("expiresAt", 0)
+            now_ms = int(time.time() * 1000)
+            if expires_at > now_ms + 60_000:
+                # Token was already refreshed by another request
+                return True
+            refresh_token = oauth.get("refreshToken")
+            if not refresh_token:
+                return False
+        except Exception:
+            return False
+
+        logger.info("Attempting OAuth token refresh")
+
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(
+                    TOKEN_URL,
+                    json={
+                        "grant_type": "refresh_token",
+                        "refresh_token": refresh_token,
+                        "client_id": CLIENT_ID,
+                    },
+                    headers={"Content-Type": "application/json"},
+                )
+
+                if resp.status_code != 200:
+                    logger.error(
+                        "Token refresh failed",
+                        status=resp.status_code,
+                        body=resp.text[:300],
+                    )
+                    return False
+
+                tokens = resp.json()
+                expires_in = tokens.get("expires_in", 3600)
+                new_expires_at = int(time.time() + expires_in) * 1000
+
+                oauth["accessToken"] = tokens["access_token"]
+                if tokens.get("refresh_token"):
+                    oauth["refreshToken"] = tokens["refresh_token"]
+                oauth["expiresAt"] = new_expires_at
+                creds["claudeAiOauth"] = oauth
+
+                with open(cred_path, "w") as f:
+                    json.dump(creds, f)
+                os.chmod(cred_path, 0o600)
+
+                logger.info(
+                    "OAuth token refreshed successfully",
+                    expires_in=expires_in,
+                )
+                return True
+
+        except Exception as e:
+            logger.error("Token refresh error", error=str(e))
+            return False
+
+
 @router.get("/status")
 async def auth_status() -> AuthStatusResponse:
     """Check auth status by reading credential files (no CLI needed)."""
@@ -82,9 +171,22 @@ async def auth_status() -> AuthStatusResponse:
             if oauth.get("accessToken"):
                 expires_at = oauth.get("expiresAt", 0)
                 now_ms = int(time.time() * 1000)
+                # Refresh 5 minutes before expiry for safety margin
+                buffer_ms = 5 * 60 * 1000
 
-                if expires_at > 0 and expires_at <= now_ms:
-                    # Token expired
+                if expires_at > 0 and expires_at <= now_ms + buffer_ms:
+                    # Token expired or about to expire - try auto-refresh
+                    if oauth.get("refreshToken"):
+                        refreshed = await _refresh_oauth_token()
+                        if refreshed:
+                            return AuthStatusResponse(
+                                logged_in=True,
+                                auth_method="oauth",
+                                api_provider="claude.ai",
+                                message="토큰이 자동 갱신되었습니다.",
+                            )
+
+                    # Refresh failed or no refresh token
                     expired_time = datetime.fromtimestamp(expires_at / 1000)
                     expired_str = expired_time.strftime("%Y-%m-%d %H:%M:%S")
                     return AuthStatusResponse(
