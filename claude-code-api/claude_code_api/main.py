@@ -5,6 +5,7 @@ A FastAPI-based service that provides OpenAI-compatible endpoints
 while leveraging Claude Code's powerful workflow capabilities.
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -55,7 +56,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as e:
         logger.warning("Auth check failed (will check on first request)", error=str(e))
 
+    # Start background token refresh task (every 30 minutes)
+    async def _token_refresh_loop():
+        from claude_code_api.api.auth import auth_status as _auth_status
+        while True:
+            await asyncio.sleep(30 * 60)  # 30 minutes
+            try:
+                result = await _auth_status()
+                if result.message and "갱신" in result.message:
+                    logger.info("Background token refresh succeeded", lifecycle=True)
+                elif not result.logged_in:
+                    logger.warning("Background token check: not logged in", method=result.auth_method)
+            except Exception as e:
+                logger.warning("Background token refresh failed", error=str(e))
+
+    refresh_task = asyncio.create_task(_token_refresh_loop())
+
     yield
+
+    refresh_task.cancel()
 
     # Cleanup
     logger.info("Shutting down Claude Code API Gateway", lifecycle=True)
